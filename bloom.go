@@ -21,7 +21,10 @@ import (
 	"github.com/dchest/siphash"
 )
 
-const maxNrHashes = 32
+const (
+	maxNrHashes = 32
+	ln2         = 0.69314718055994529
+)
 
 // Filter is a bloom filter.
 type Filter struct {
@@ -35,11 +38,26 @@ type Filter struct {
 	nrEntries    int
 }
 
+// DeriveSize returns the size of a filter (as a power of 2) in bits,
+// required to hold at least n entries with a p false positive rate.
+//
+// The returned value is directly suitable for use as the mLn2 parameter
+// passed to New().
+func DeriveSize(n int, p float64) int {
+	if n <= 0 {
+		panic("negative number of entries")
+	}
+	if p <= 0.0 || p >= 1.0 {
+		panic("invalid false positive rate")
+	}
+	m := (float64(n) * math.Log(p)) / math.Log(1.0/math.Pow(2.0, ln2))
+	return int(math.Ceil(math.Log2(m)))
+}
+
 // New constructs a new Filter with a filter set size 2^mLn2 bits, and false
 // postive rate p.
 func New(rand io.Reader, mLn2 int, p float64) (*Filter, error) {
 	const (
-		ln2         = 0.69314718055994529
 		ln2Sq       = 0.48045301391820139
 		maxMln2     = strconv.IntSize - 1
 		maxHeapSize = 1 << 39 // 512 GiB
@@ -48,6 +66,10 @@ func New(rand io.Reader, mLn2 int, p float64) (*Filter, error) {
 	var key [16]byte
 	if _, err := io.ReadFull(rand, key[:]); err != nil {
 		return nil, err
+	}
+
+	if p <= 0.0 || p >= 1.0 {
+		return nil, fmt.Errorf("invalid false positive rate: %v", p)
 	}
 
 	if mLn2 > maxMln2 {
